@@ -37,6 +37,8 @@ The deployed runtime uses Sites / Cloudflare Workers, D1 and R2 so the website c
 
 No game passwords, unauthorized boosting, cheats, wagers, entry fees, wallets or payouts are offered. Real events, results, social links, business contacts and APK releases are never fabricated.
 
-## Private website
+## Website
 
-[Open RankForge](https://rankforge-esports-india-ffrb.arceus6667.chatgpt.site). The initial publication is private to the owner. Player and admin accounts use the same login form; there is no public organizer choice. The requested admin account was provisioned and verified on the hosted database, and the one-time provisioner has been disabled. Credentials are delivered only in the owner chat.
+[Open RankForge](https://rankforge-esports-india-ffrb.arceus6667.chatgpt.site). The site is currently public; admin and player operations remain protected by account permissions. Player and admin accounts use the same login form; there is no public organizer choice. The requested admin account was provisioned and verified on the hosted database, and the one-time provisioner has been disabled. Credentials are delivered only in the owner chat.
+
+Administrator login opens the tournament manager directly. Add Tournament and Manage tournaments are visible only to admins. Players complete required game UID setup once; saved identities are reused. Room ID and password are revealed to assigned registered players automatically 15 minutes before match start.

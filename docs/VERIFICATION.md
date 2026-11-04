@@ -35,3 +35,9 @@ Email/password authentication needs Supabase Auth runtime configuration and prov
 Knockout rounds are manually seeded and scheduled with exactly two registered entries; automatic bracket advancement is deferred. Lists have documented bounded page sizes, and bulk moderation, cursor pagination, automated retention and self-service data deletion/export are future operational work. Policy text and publisher-specific tournament conditions need owner review before a public launch.
 
 Full dependency-tree audit after patching: 0 critical, 0 high, 12 moderate and 1 low findings in development/build tooling. The production dependency audit reports 0 findings. Remaining tooling advisories are not claimed resolved; upgrades must preserve framework and migration-tool compatibility.
+
+## Account-login revision
+
+A single standard login now serves players and administrators, without a public organizer choice or organizer views. Native email/password credentials are salted, peppered PBKDF2 hashes. Only hashed, expiring, revocable session tokens are stored. A one-time secret-gated provisioner creates the requested administrator account; no production login credentials are committed or displayed on the site. Secure hosted identity remains an optional verified-email route. Normal password signup requires matching verified hosted email ownership; unverified emails cannot create credentials.
+
+25 automated checks pass. A further 13 local native-account HTTP checks passed, covering gated provisioning, replay rejection, invalid credentials, normal login, private admin access, password change, previous-session revocation and logout.

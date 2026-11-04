@@ -6,6 +6,7 @@ async function handler(request:Request,context:{params:Promise<{path:string[]}>}
   try {
     const {path}=await context.params;const action=path.join('/');
     if(request.method==='GET') {
+      if(action==='site-session'){await mutate('auth/site',{},request);return Response.redirect(new URL('/profile',request.url),303);}
       if(action==='bootstrap')return json(await bootstrap());
       if(action==='me')return json(await workspace());
       if(action==='admin')return json(await adminData());

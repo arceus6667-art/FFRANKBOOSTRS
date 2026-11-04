@@ -45,3 +45,7 @@ Implemented teams/invitations, consent and private game identities, atomic free 
 Added explicit match assignments, locked result-bearing rosters, database prevention of conflicting verified winners, support/privacy tickets and responses, auth-confirmation/recovery callback handling, operational guides, error pages, production cache/security headers, and dependency security updates. The owner’s verified identity is configured for administrator bootstrap without publishing their contact as the business support number.
 
 The website stays owner-private on initial publication. Optional email-provider configuration, business contact/social details and an actual signed APK are honestly unconfigured. See VERIFICATION.md for test evidence and operational limits. No synthetic competition records are shipped to production.
+
+## 5 — Single SaaS login and private administrator account
+
+Removed public organizer choices and organizer branding from account entry. Added native password accounts and revocable sessions, a protected one-time admin provisioner, normal login routing based on database roles, password changes with session revocation, and verified-email ownership checks before password signup. Production credentials are never in code or website copy. A separately generated administrator login will be delivered only in the owner chat.

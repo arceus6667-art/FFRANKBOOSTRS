@@ -60,3 +60,10 @@ export const support = sqliteTable('support', {
   subject:text().notNull(),message:text().notNull(),status:text().notNull().default('open'),
   response:text().notNull().default(''),created:integer().notNull(),
 });
+export const credentials = sqliteTable('credentials', {
+  player:text().primaryKey().references(()=>players.id),email:text().notNull().unique(),
+  salt:text().notNull(),hash:text().notNull(),verified:integer().notNull().default(0),created:integer().notNull(),
+});
+export const sessions = sqliteTable('sessions', {
+  hash:text().primaryKey(),player:text().notNull().references(()=>players.id),expires:integer().notNull(),created:integer().notNull(),
+},t=>[index('sessions_player').on(t.player)]);

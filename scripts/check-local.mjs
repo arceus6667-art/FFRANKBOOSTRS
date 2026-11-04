@@ -6,7 +6,9 @@ const web=fileURLToPath(new URL('../web/',import.meta.url));
 function fixture(sql){mkdirSync(web+'/work',{recursive:true});writeFileSync(web+'/work/review-fixture.sql',sql);execFileSync(process.execPath,['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local','--config','dist/server/wrangler.json','--persist-to','.wrangler/state','--file','work/review-fixture.sql'],{cwd:web,stdio:'pipe'});}
 const base='http://127.0.0.1:5173';
 const login=await fetch(base+'/signin-with-chatgpt?return_to=/profile',{redirect:'manual'});
-const cookie=login.headers.get('set-cookie').split(';')[0];
+let cookie=login.headers.get('set-cookie').split(';')[0];
+const siteSession=await fetch(base+'/api/v1/site-session',{headers:{Cookie:cookie},redirect:'manual'});
+cookie+='; '+siteSession.headers.get('set-cookie').split(';')[0];
 let checks=0;
 async function get(path,auth=true){const r=await fetch(base+'/api/v1/'+path,{headers:auth?{Cookie:cookie}:{}});return {status:r.status,body:await r.json()};}
 async function post(path,body,status=200,auth=true){const r=await fetch(base+'/api/v1/'+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:base,...auth?{Cookie:cookie}:{}},body:JSON.stringify(body)});const result=await r.json();assert.equal(r.status,status,JSON.stringify({path,result}));checks++;return result;}

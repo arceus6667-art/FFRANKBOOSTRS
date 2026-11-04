@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { all, one, run, statement, db, uid, auditStatement, notifyStatement, config } from './store';
 import { identity, requirePlayer, requireRole, rateLimit, currentTeams } from './identity';
 import { expect, str, int, date, validateEvent, rulesFor, safeVideo, states, Problem, type Row } from './domain';
+import { nativeAuth } from './native-auth';
 
 export async function bootstrap() {
   const [user,tournaments,announcements,settings,leaderboard] = await Promise.all([
@@ -11,7 +12,7 @@ export async function bootstrap() {
     all(`SELECT p.code,p.name,t.game,t.id tournament,t.title tournament_title, SUM(r.points) points,SUM(r.won) wins,SUM(r.eliminations) eliminations,COUNT(*) played FROM results r JOIN entrants e ON e.registration=r.registration JOIN players p ON p.id=e.player JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.status='verified' GROUP BY p.id,t.game,t.id ORDER BY points DESC,wins DESC,eliminations DESC LIMIT 1000`),
   ]);
   const teamLeaderboard=await all(`SELECT tm.id,tm.name,t.game,t.id tournament,t.title tournament_title,SUM(r.points) points,SUM(r.won) wins,SUM(r.eliminations) eliminations,COUNT(*) played FROM results r JOIN registrations reg ON reg.id=r.registration JOIN teams tm ON tm.id=reg.team JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.status='verified' GROUP BY tm.id,t.game,t.id ORDER BY points DESC,wins DESC,eliminations DESC LIMIT 1000`);
-  return {user,tournaments,announcements,settings,leaderboard,teamLeaderboard,emailAuth:!!(config().SUPABASE_URL&&config().SUPABASE_PUBLISHABLE_KEY)};
+  return {user,tournaments,announcements,settings,leaderboard,teamLeaderboard,emailAuth:!!(config().AUTH_PEPPER||config().SUPABASE_URL&&config().SUPABASE_PUBLISHABLE_KEY)};
 }
 export async function workspace() {
   const p=await requirePlayer(),id=String(p.id);
@@ -210,9 +211,9 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
 
 async function authAction(action:string,b:Record<string,unknown>,request:Request) {
   const cfg=config();
-  if(action==='auth/logout') {const jar=await cookies();jar.delete('rf_access');return {message:'Signed out.'};}
+  await rateLimit(`auth:${action}:${request.headers.get('cf-connecting-ip')??'unknown'}`,8);
+  const native=await nativeAuth(action,b,request);if(native)return native;
   expect(cfg.SUPABASE_URL&&cfg.SUPABASE_PUBLISHABLE_KEY,'Email sign-in is not configured. Continue with secure sign-in instead.',503);
-  await rateLimit(`auth:${request.headers.get('cf-connecting-ip')??'unknown'}`,8);
   const base=cfg.SUPABASE_URL,headers={apikey:cfg.SUPABASE_PUBLISHABLE_KEY,'Content-Type':'application/json'};
   if(action==='auth/session'||action==='auth/reset') {
     const token=str(b.token,20,8192);const verified=await fetch(`${base}/auth/v1/user`,{headers:{...headers,Authorization:`Bearer ${token}`}});

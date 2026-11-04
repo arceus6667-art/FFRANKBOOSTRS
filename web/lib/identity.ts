@@ -2,8 +2,10 @@ import { cookies } from 'next/headers';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { all, one, run, uid, config } from './store';
 import { expect, Problem, type Row } from './domain';
+import { nativeSession } from './native-auth';
 export async function identity():Promise<Row|null> {
-  const workspace=await getChatGPTUser();
+  const native=await nativeSession();if(native)return native;
+  const workspace=(await cookies()).get('rf_site')?.value==='1'?await getChatGPTUser():null;
   let id=workspace?`site:${workspace.userId}`:'';let email=workspace?.email??'';
   const cfg=config();
   if(!id&&cfg.SUPABASE_URL&&cfg.SUPABASE_PUBLISHABLE_KEY) {

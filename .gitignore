@@ -4,3 +4,4 @@ node_modules/
 .next/
 coverage/
 supabase/.temp/
+/work/

@@ -33,6 +33,10 @@ Type-check from `web/` with `npx tsc --noEmit`. With a disposable local preview 
 - [Original artwork provenance](web/docs/ASSETS.md)
 - [Verification evidence and launch limits](docs/VERIFICATION.md)
 
-The deployed runtime uses Sites / Cloudflare Workers, D1 and R2 so the website can run with durable storage immediately. The earlier Supabase PostgreSQL foundation is retained in `supabase/` for a future managed-PostgreSQL deployment. Optional Supabase email authentication is implemented but remains disabled until an explicitly selected project is configured; secure hosted sign-in is available now.
+The deployed runtime uses Sites / Cloudflare Workers, D1 and R2 so the website can run with durable storage immediately. The earlier Supabase PostgreSQL foundation is retained in `supabase/` for a future managed-PostgreSQL deployment. Standard password login is implemented natively with private, database-backed sessions. Secure hosted identity verifies email ownership before new password-account registration. Optional external email-provider integration is retained separately.
 
 No game passwords, unauthorized boosting, cheats, wagers, entry fees, wallets or payouts are offered. Real events, results, social links, business contacts and APK releases are never fabricated.
+
+## Private website
+
+[Open RankForge](https://rankforge-esports-india-ffrb.arceus6667.chatgpt.site). The initial publication is private to the owner. Player and admin accounts use the same login form; there is no public organizer choice. The requested admin account was provisioned and verified on the hosted database, and the one-time provisioner has been disabled. Credentials are delivered only in the owner chat.

@@ -30,7 +30,7 @@ The homepage, sign-in, game discovery, player hub and organizer console render i
 
 The first hosted audience remains owner-private. The owner account receives organizer access through a secret verified-owner configuration. No public access expansion was made.
 
-Email/password authentication needs Supabase Auth runtime configuration and provider testing; Google sign-in is not advertised while unconfigured. Secure hosted sign-in works independently. No verified business WhatsApp number, social account, or Android package was supplied, so these remain unpublished. Support and privacy requests can still be submitted in the built-in authenticated support queue.
+Native account password login is active and has been tested on the hosted site. New password-account registration requires matching verified hosted-email ownership. External email delivery/recovery and Google provider configuration remain unavailable; no unconfigured provider is advertised as working. No verified business WhatsApp number, social account, or Android package was supplied, so these remain unpublished. Support and privacy requests can still be submitted in the built-in authenticated support queue.
 
 Knockout rounds are manually seeded and scheduled with exactly two registered entries; automatic bracket advancement is deferred. Lists have documented bounded page sizes, and bulk moderation, cursor pagination, automated retention and self-service data deletion/export are future operational work. Policy text and publisher-specific tournament conditions need owner review before a public launch.
 
@@ -41,3 +41,7 @@ Full dependency-tree audit after patching: 0 critical, 0 high, 12 moderate and 1
 A single standard login now serves players and administrators, without a public organizer choice or organizer views. Native email/password credentials are salted, peppered PBKDF2 hashes. Only hashed, expiring, revocable session tokens are stored. A one-time secret-gated provisioner creates the requested administrator account; no production login credentials are committed or displayed on the site. Secure hosted identity remains an optional verified-email route. Normal password signup requires matching verified hosted email ownership; unverified emails cannot create credentials.
 
 25 automated checks pass. A further 13 local native-account HTTP checks passed, covering gated provisioning, replay rejection, invalid credentials, normal login, private admin access, password change, previous-session revocation and logout.
+
+## Hosted acceptance checks
+
+Published successfully at https://rankforge-esports-india-ffrb.arceus6667.chatgpt.site with the owner-private audience preserved. Production HTTP checks returned 200 for administrator provisioning, normal password login, protected admin access, and the sign-in page. Session cookies have Secure and HttpOnly flags. Anonymous application identity is null; no production events or standings were fabricated. Login HTML contains neither the requested account credentials nor organizer login controls. After provisioning, the bootstrap secret and automatic owner-email role setting were removed; the saved version was redeployed at environment revision 3. Account credentials and the stable password pepper are absent from repository source.

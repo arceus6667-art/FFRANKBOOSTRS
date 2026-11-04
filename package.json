@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test", "check": "node --check src/domain/tournaments.js" },
-  "engines": { "node": ">=22" }
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/domain/tournaments.js && node --check src/server/auth.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.119.0"
+  }
 }

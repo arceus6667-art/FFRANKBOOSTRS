@@ -1,0 +1,1 @@
+export default function NotFound() {return <main className="container page"><div className="empty"><span className="eyebrow">404 · OUTSIDE THE ARENA</span><h1>This page didn’t make the roster.</h1><p>The address may have changed. Your next competition is still out there.</p><a className="button" href="/">Back to RankForge</a></div></main>;}

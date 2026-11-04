@@ -19,7 +19,7 @@ export async function workspace() {
     all('SELECT * FROM identities WHERE player=?',[id]),currentTeams(id),
     all("SELECT i.*,t.name,t.game FROM invitations i JOIN teams t ON t.id=i.team WHERE i.player=? AND i.status='pending' AND i.expires>?",[id,Date.now()]),
     all('SELECT r.*,t.title,t.game,t.status,t.starts,t.checkin FROM registrations r JOIN entrants e ON e.registration=r.id JOIN tournaments t ON t.id=r.tournament WHERE e.player=? ORDER BY t.starts',[id]),
-    all(`SELECT m.id,m.tournament,m.title,m.starts,m.checkin,m.release,m.status,t.title tournament_title,t.game,c.created checked FROM matches m JOIN tournaments t ON t.id=m.tournament JOIN entrants e ON e.tournament=t.id LEFT JOIN checkins c ON c.match=m.id AND c.player=e.player WHERE e.player=? ORDER BY m.starts`,[id]),
+    all(`SELECT m.id,m.tournament,m.title,m.starts,m.checkin,m.release,m.status,t.title tournament_title,t.game,c.created checked FROM matches m JOIN tournaments t ON t.id=m.tournament JOIN entrants e ON e.tournament=t.id LEFT JOIN checkins c ON c.match=m.id AND c.player=e.player WHERE e.player=? AND (json_array_length(m.participants)=0 OR e.registration IN (SELECT value FROM json_each(m.participants))) ORDER BY m.starts`,[id]),
     all('SELECT r.*,m.title,m.tournament,t.game FROM results r JOIN entrants e ON e.registration=r.registration JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE e.player=? ORDER BY r.created DESC',[id]),
     all('SELECT * FROM notifications WHERE player=? ORDER BY created DESC LIMIT 100',[id]),
   ]);
@@ -39,7 +39,7 @@ export async function adminData() {
     disputes:'SELECT d.*,p.name,m.title FROM disputes d JOIN players p ON p.id=d.player JOIN results r ON r.id=d.result JOIN matches m ON m.id=r.match ORDER BY d.created DESC LIMIT 500',
     announcements:'SELECT * FROM announcements ORDER BY created DESC LIMIT 100',
     audit:'SELECT a.*,p.name FROM audit a JOIN players p ON p.id=a.actor ORDER BY a.created DESC LIMIT 300',
-    settings:'SELECT * FROM settings',assets:'SELECT id,type,size,created FROM assets ORDER BY created DESC LIMIT 100',
+    support:'SELECT s.*,p.name,p.code FROM support s JOIN players p ON p.id=s.player ORDER BY s.created DESC LIMIT 300',settings:'SELECT * FROM settings',assets:'SELECT id,type,size,created FROM assets ORDER BY created DESC LIMIT 100',
   };
   const output:Record<string,unknown>={user:p};
   await Promise.all(Object.entries(queries).filter(([key])=>p.role==='admin'||['results','disputes','tournaments'].includes(key)).map(async([key,sql])=>{output[key]=await all(sql);}));
@@ -48,7 +48,7 @@ export async function adminData() {
 export async function lobby(matchId:string) {
   const p=await requirePlayer(),id=String(p.id),m=await one('SELECT * FROM matches WHERE id=?',[matchId]);expect(m,'Match not found.',404);
   if(p.role!=='admin') {
-    expect(await one('SELECT 1 FROM entrants WHERE tournament=? AND player=?',[m.tournament,id]),'This lobby is for registered players.',403);
+    expect(await one('SELECT 1 FROM entrants WHERE tournament=? AND player=? AND (json_array_length(?)=0 OR registration IN (SELECT value FROM json_each(?)))',[m.tournament,id,m.participants,m.participants]),'This lobby is for assigned registered players.',403);
     expect(await one('SELECT 1 FROM checkins WHERE match=? AND player=?',[matchId,id]),'Check in before accessing the lobby.',403);
     expect(Date.now()>=Number(m.release)&&Date.now()<Number(m.starts)+6*3600000&&m.status!=='completed'&&m.status!=='cancelled','Lobby details are not available in this time window.',403);
     const t=await one('SELECT status FROM tournaments WHERE id=?',[m.tournament]);expect(t&&['upcoming','live'].includes(String(t.status)),'Lobby is unavailable for this event status.',403);
@@ -92,12 +92,12 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
   if(action==='teams/respond') {
     const invite=await one("SELECT * FROM invitations WHERE id=? AND player=? AND status='pending' AND expires>?",[id(),actor,now]);expect(invite,'Invitation expired or is no longer available.');
     const accepted=b.accept===true;
-    await db().batch([statement("UPDATE invitations SET status=? WHERE id=? AND status='pending'",[accepted?'accepted':'declined',invite.id]),...(accepted?[statement('INSERT OR IGNORE INTO members (id,team,player,joined) VALUES (?,?,?,?)',[uid(),invite.team,actor,now])]:[])]);
+    await db().batch([...(accepted?[statement("INSERT OR IGNORE INTO members (id,team,player,joined) SELECT ?,team,player,? FROM invitations WHERE id=? AND player=? AND status='pending' AND expires>?",[uid(),now,invite.id,actor,now])]:[]),statement("UPDATE invitations SET status=? WHERE id=? AND status='pending'",[accepted?'accepted':'declined',invite.id])]);
     return {message:accepted?'You joined the squad.':'Invitation declined.'};
   }
   if(action==='teams/leave') {
     const team=await one('SELECT * FROM teams WHERE id=?',[id()]);expect(team,'Team not found.',404);
-    expect(team.captain!==actor,'Transfer captaincy before leaving.');
+    if(team.captain===actor)expect(!await one('SELECT id FROM members WHERE team=? AND player<>?',[team.id,actor]),'Transfer captaincy before leaving a team with other members.');
     await run('DELETE FROM members WHERE team=? AND player=?',[team.id,actor]);return {message:'You left the team. Existing tournament rosters remain unchanged.'};
   }
   if(action==='teams/captain') {
@@ -131,13 +131,13 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
   if(action==='matches/check-in') {
     const m=await one('SELECT m.*,t.status event_status FROM matches m JOIN tournaments t ON t.id=m.tournament WHERE m.id=?',[id()]);expect(m,'Match not found.',404);
     expect(['upcoming','live','registration_closed'].includes(String(m.event_status))&&m.status==='upcoming'&&now<Number(m.checkin)&&now>=Number(m.starts)-24*3600000,'Check-in is available in the 24 hours before the match, until its deadline.');
-    expect(await one('SELECT 1 FROM entrants WHERE tournament=? AND player=?',[m.tournament,actor]),'You are not registered for this event.',403);
+    expect(await one('SELECT 1 FROM entrants WHERE tournament=? AND player=? AND (json_array_length(?)=0 OR registration IN (SELECT value FROM json_each(?)))',[m.tournament,actor,m.participants,m.participants]),'You are not assigned to this match.',403);
     await run('INSERT OR IGNORE INTO checkins (id,match,player,created) VALUES (?,?,?,?)',[uid(),m.id,actor,now]);return {message:'You are checked in. Lobby access opens at the scheduled release time.'};
   }
   if(action==='results/submit') {
     const m=await one('SELECT m.*,t.status event_status FROM matches m JOIN tournaments t ON t.id=m.tournament WHERE m.id=?',[str(b.match)]);expect(m,'Match not found.',404);
     expect(now>=Number(m.starts)&&['live','completed'].includes(String(m.event_status)),'Results open after the event starts.');
-    const reg=await one('SELECT r.* FROM registrations r JOIN entrants e ON e.registration=r.id WHERE r.tournament=? AND e.player=?',[m.tournament,actor]);expect(reg,'Only registered participants can submit results.',403);
+    const reg=await one('SELECT r.* FROM registrations r JOIN entrants e ON e.registration=r.id WHERE r.tournament=? AND e.player=?',[m.tournament,actor]);expect(reg,'Only registered participants can submit results.',403);const assigned=JSON.parse(String(m.participants)) as string[];expect(!assigned.length||assigned.includes(String(reg.id)),'Your entry is not assigned to this match.',403);
     const evidence=b.evidence?str(b.evidence):'';if(evidence)expect(await one('SELECT id FROM assets WHERE id=? AND owner=?',[evidence,actor]),'Evidence file is not yours.',403);
     await run('INSERT INTO results (id,match,registration,submitter,placement,eliminations,won,evidence,created) VALUES (?,?,?,?,?,?,?,?,?)',[uid(),m.id,reg.id,actor,int(b.placement,1,512),int(b.eliminations,0,1000),b.won===true?1:0,evidence,now]);return {message:'Result submitted. It will remain pending until independently verified.'};
   }
@@ -148,6 +148,8 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
     expect(!await one("SELECT id FROM disputes WHERE result=? AND status='open'",[result.id]),'An open dispute already exists.');
     await db().batch([statement('INSERT INTO disputes (id,result,player,reason,created) VALUES (?,?,?,?,?)',[uid(),result.id,actor,str(b.reason,10,2000),now]),statement("UPDATE results SET status='disputed' WHERE id=?",[result.id]),auditStatement(actor,'result.disputed',String(result.id))]);return {message:'Dispute opened. This result is excluded from standings until reviewed.'};
   }
+  if(action==='support/create') {const ticket=uid(),kind=str(b.kind);expect(['account','privacy','fair_play','other'].includes(kind),'Choose a valid support category.');await db().batch([statement('INSERT INTO support (id,player,kind,subject,message,created) VALUES (?,?,?,?,?,?)',[ticket,actor,kind,str(b.subject,5,120),str(b.message,10,4000),now]),notifyStatement(actor,`Support request received: ${ticket}. A response will appear in Notifications.`)]);return {message:`Request received. Reference: ${ticket}. Watch Notifications for a response.`};}
+  if(action==='admin/support') {admin();const ticket=await one('SELECT * FROM support WHERE id=?',[id()]);expect(ticket,'Support request not found.',404);const response=str(b.response,10,4000);await db().batch([statement("UPDATE support SET status='responded',response=? WHERE id=?",[response,ticket.id]),notifyStatement(String(ticket.player),`Support response (${ticket.subject}): ${response}`),auditStatement(actor,'support.respond',String(ticket.id))]);return {message:'Response saved and delivered to the player’s notifications.'};}
   if(action==='notifications/read') {await run('UPDATE notifications SET read=1 WHERE player=?',[actor]);return {message:'Notifications marked as read.'};}
 
   if(action==='admin/tournaments') {
@@ -160,7 +162,7 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
   }
   if(action==='admin/event-state') {
     admin();const t=await one('SELECT * FROM tournaments WHERE id=?',[id()]);expect(t,'Event not found.',404);const status=str(b.status);
-    expect(states[String(t.status)]?.includes(status),'Use the next valid tournament state.');
+    expect(states[String(t.status)]?.includes(status),'Use the next valid tournament state.');if(status==='live')expect(now>=Number(t.starts),'The event cannot go live before its scheduled start.');
     if(status==='completed')expect(!await one("SELECT r.id FROM results r JOIN matches m ON m.id=r.match WHERE m.tournament=? AND r.status IN ('pending','disputed')",[t.id]),'Resolve pending and disputed results before completing the event.');
     const entrants=await all('SELECT DISTINCT player FROM entrants WHERE tournament=?',[t.id]);
     await db().batch([statement('UPDATE tournaments SET status=? WHERE id=?',[status,t.id]),auditStatement(actor,`tournament.${status}`,String(t.id)),...entrants.map(e=>notifyStatement(String(e.player),`${t.title}: status changed to ${status.replaceAll('_',' ')}.`))]);return {message:'Tournament status updated.'};
@@ -177,16 +179,18 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
     const starts=date(b.starts),checkin=date(b.checkin),release=date(b.release);expect(Number(event.closes)<=checkin&&checkin<=starts&&release<=starts&&release>=checkin,'Lobby release must be between check-in deadline and match start.');
     const matchId=b.id?str(b.id):uid();const previous=b.id?await one('SELECT * FROM matches WHERE id=?',[matchId]):null;
     if(b.id)expect(previous&&previous.tournament===event.id,'Match does not belong to this tournament.');
-    const values=[event.id,str(b.title,3,100),starts,checkin,release,str(b.room??'',0,200),str(b.instructions??'',0,2000),str(b.status??'upcoming')];expect(['upcoming','live','completed','cancelled'].includes(String(values[7])),'Invalid match state.');
+    const participants=str(b.participants??'',0,2000).split(',').map(s=>s.trim()).filter(Boolean);expect(new Set(participants).size===participants.length,'Match entries must be unique.');if(event.format==='knockout')expect(participants.length===2,'A knockout match needs exactly two registered entry IDs.');for(const entry of participants)expect(await one('SELECT id FROM registrations WHERE id=? AND tournament=?',[entry,event.id]),'Every assigned entry must belong to this event.');if(previous){const hasResults=await one('SELECT id FROM results WHERE match=?',[matchId]);expect(!hasResults||JSON.stringify(participants)===previous.participants,'Match assignments are locked once results exist.');}
+    const values=[event.id,str(b.title,3,100),starts,checkin,release,str(b.room??'',0,200),str(b.instructions??'',0,2000),str(b.status??'upcoming'),JSON.stringify(participants)];expect(['upcoming','live','completed','cancelled'].includes(String(values[7])),'Invalid match state.');
     const entrants=await all('SELECT DISTINCT player FROM entrants WHERE tournament=?',[event.id]);
-    await db().batch([previous?statement('UPDATE matches SET tournament=?,title=?,starts=?,checkin=?,release=?,room=?,instructions=?,status=? WHERE id=?',[...values,matchId]):statement('INSERT INTO matches (tournament,title,starts,checkin,release,room,instructions,status,id) VALUES (?,?,?,?,?,?,?,?,?)',[...values,matchId]),auditStatement(actor,'match.save',matchId),...entrants.map(e=>notifyStatement(String(e.player),`${event.title}: match schedule updated. Open My Matches for details.`))]);return {message:'Match and lobby settings saved.'};
+    await db().batch([previous?statement('UPDATE matches SET tournament=?,title=?,starts=?,checkin=?,release=?,room=?,instructions=?,status=?,participants=? WHERE id=?',[...values,matchId]):statement('INSERT INTO matches (tournament,title,starts,checkin,release,room,instructions,status,participants,id) VALUES (?,?,?,?,?,?,?,?,?,?)',[...values,matchId]),auditStatement(actor,'match.save',matchId),...entrants.map(e=>notifyStatement(String(e.player),`${event.title}: match schedule updated. Open My Matches for details.`))]);return {message:'Match and lobby settings saved.'};
   }
   if(action==='admin/review') {
     reviewer();const r=await one('SELECT r.*,t.rules,t.mode FROM results r JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.id=?',[id()]);expect(r,'Result not found.',404);
-    expect(r.submitter!==actor,'You cannot verify your own submitted result.',403);
+    expect(r.submitter!==actor,'You cannot verify your own submitted result.',403);expect(!await one('SELECT 1 FROM entrants e JOIN matches m ON m.tournament=e.tournament WHERE m.id=? AND e.player=?',[r.match,actor]),'Event participants cannot review results from their own competition.',403);
     expect(!await one("SELECT id FROM disputes WHERE result=? AND status='open'",[r.id]),'Resolve the open dispute before publishing this result.');
     const status=str(b.status);expect(['verified','rejected'].includes(status),'Choose verify or reject.');const rules=JSON.parse(String(r.rules));
     const placement=int(b.placement??r.placement,1,512),eliminations=int(b.eliminations??r.eliminations,0,1000),won=b.won===undefined?Number(r.won):b.won===true?1:0;
+    if(status==='verified'&&won&&r.mode!=='battle_royale')expect(!await one("SELECT id FROM results WHERE match=? AND status='verified' AND won=1 AND id<>?",[r.match,r.id]),'This match already has a verified winner. Correct that result before publishing a different winner.');
     const points=status==='verified'?(r.mode==='battle_royale'?(rules.placementPoints[placement-1]??0)+eliminations*rules.eliminationPoints:won*rules.winPoints):0;
     await db().batch([statement('UPDATE results SET status=?,placement=?,eliminations=?,won=?,points=?,reviewer=?,reason=? WHERE id=?',[status,placement,eliminations,won,points,actor,str(b.reason,5,2000),r.id]),auditStatement(actor,'result.review',JSON.stringify({id:r.id,previous:{status:r.status,points:r.points,placement:r.placement,eliminations:r.eliminations},next:{status,points,placement,eliminations}})),notifyStatement(String(r.submitter),`Your result was ${status}. Check My Matches for the review.`)]);return {message:'Result reviewed. Verified standings updated automatically.'};
   }
@@ -210,10 +214,16 @@ async function authAction(action:string,b:Record<string,unknown>,request:Request
   expect(cfg.SUPABASE_URL&&cfg.SUPABASE_PUBLISHABLE_KEY,'Email sign-in is not configured. Continue with secure sign-in instead.',503);
   await rateLimit(`auth:${request.headers.get('cf-connecting-ip')??'unknown'}`,8);
   const base=cfg.SUPABASE_URL,headers={apikey:cfg.SUPABASE_PUBLISHABLE_KEY,'Content-Type':'application/json'};
+  if(action==='auth/session'||action==='auth/reset') {
+    const token=str(b.token,20,8192);const verified=await fetch(`${base}/auth/v1/user`,{headers:{...headers,Authorization:`Bearer ${token}`}});
+    const user=await verified.json() as {email_confirmed_at?:string,is_anonymous?:boolean};expect(verified.ok&&user.email_confirmed_at&&!user.is_anonymous,'This verification or recovery link is invalid or expired.',401);
+    if(action==='auth/reset') {expect(typeof b.password==='string'&&b.password.length>=12&&b.password.length<=128,'Use a password between 12 and 128 characters.');const update=await fetch(`${base}/auth/v1/user`,{method:'PUT',headers:{...headers,Authorization:`Bearer ${token}`},body:JSON.stringify({password:b.password})});expect(update.ok,'The password could not be updated. Request a new recovery link.');}
+    (await cookies()).set('rf_access',token,{httpOnly:true,secure:new URL(request.url).protocol==='https:',sameSite:'lax',path:'/',maxAge:3600});return {message:action==='auth/reset'?'Password updated. You can continue to your dashboard.':'Email verified. Welcome to RankForge.'};
+  }
   const email=str(b.email,3,254);expect(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),'Enter a valid email address.');
-  if(action==='auth/recover') {await fetch(`${base}/auth/v1/recover`,{method:'POST',headers,body:JSON.stringify({email})});return {message:'If an account exists, a recovery email will arrive shortly.'};}
-  const password=str(b.password,12,128);
-  if(action==='auth/register') {expect(b.consent===true&&b.adult===true,'Confirm age eligibility and accept the policies.');await fetch(`${base}/auth/v1/signup`,{method:'POST',headers,body:JSON.stringify({email,password})});return {message:'Check your email to confirm your account, then sign in.'};}
+  if(action==='auth/recover') {await fetch(`${base}/auth/v1/recover?redirect_to=${encodeURIComponent(new URL('/auth-complete',request.url).href)}`,{method:'POST',headers,body:JSON.stringify({email})});return {message:'If an account exists, a recovery email will arrive shortly.'};}
+  expect(typeof b.password==='string'&&b.password.length>=12&&b.password.length<=128,'Use a password between 12 and 128 characters.');const password=b.password;
+  if(action==='auth/register') {expect(b.consent===true&&b.adult===true,'Confirm age eligibility and accept the policies.');await fetch(`${base}/auth/v1/signup?redirect_to=${encodeURIComponent(new URL('/auth-complete',request.url).href)}`,{method:'POST',headers,body:JSON.stringify({email,password})});return {message:'Check your email to confirm your account, then sign in.'};}
   if(action==='auth/login') {
     const res=await fetch(`${base}/auth/v1/token?grant_type=password`,{method:'POST',headers,body:JSON.stringify({email,password})});const data=await res.json() as {access_token?:string,expires_in?:number,user?:{email_confirmed_at?:string}};
     expect(res.ok&&data.access_token&&data.user?.email_confirmed_at,'Unable to sign in. Check your details and email verification.',401);

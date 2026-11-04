@@ -3,7 +3,7 @@ import { runWithConnectorBinding } from "../lib/connector-context";
 import type { ConnectorBinding } from "../lib/connector-contract.mjs";
 
 const worker = {
-  fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
+  async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext<{ CONNECTORS?: ConnectorBinding }>) {
     let binding = ctx.props?.CONNECTORS;
     // Local preview emulates the same request-scoped capability. This branch and
     // the auxiliary service binding are absent from production builds.
@@ -23,7 +23,15 @@ const worker = {
         },
       };
     }
-    return runWithConnectorBinding(binding, () => handler.fetch(request, env, ctx));
+    const result = await runWithConnectorBinding(binding, () => handler.fetch(request, env, ctx));
+    const response = new Response(result.body, result);
+    response.headers.set('X-Content-Type-Options', 'nosniff');
+    response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (response.headers.get('Content-Type')?.includes('text/html')) {
+      response.headers.set('Cache-Control', 'private, no-store');
+    }
+    return response;
   },
 };
 

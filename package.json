@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/domain/tournaments.js && node --check src/server/auth.js"
+    "check": "node --check src/domain/tournaments.js && node --check src/server/auth.js",
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "test:local": "node scripts/check-local.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.15"

@@ -1,0 +1,1 @@
+ALTER TABLE `matches` ADD `participants` text DEFAULT '[]' NOT NULL;

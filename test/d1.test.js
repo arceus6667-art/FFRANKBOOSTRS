@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 test('deployed D1 schema enforces atomic capacity and roster rules', async t => {
   const db=new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  db.exec(await readFile(new URL('../web/drizzle/0000_safe_hitman.sql',import.meta.url),'utf8'));
+  const migrations=new URL('../web/drizzle/',import.meta.url);
+  for(const file of (await readdir(migrations)).filter(f=>f.endsWith('.sql')).sort()) db.exec(await readFile(new URL(file,migrations),'utf8'));
   const now=Date.now();
   for(const id of ['captain','second','third','ineligible']) {
     db.prepare("INSERT INTO players (id,code,email,name,adult,consent,created) VALUES (?,?,?,?,?,?,?)").run(id,id,`${id}@example.test`,id,id==='ineligible'?0:1,'2026-11-v1',now);
@@ -48,6 +49,12 @@ test('deployed D1 schema enforces atomic capacity and roster rules', async t => 
     db.prepare('INSERT INTO members VALUES (?,?,?,?)').run('m2','team','third',now);
     insert.run('valid-team','event','captain','team','["captain","third"]',now);
     assert.throws(()=>insert.run('wrong-captain','event','third','team','["captain","third"]',now),/roster_invalid/);
+  });
+  await t.test('a match cannot publish conflicting verified winners',()=>{
+    db.prepare('INSERT INTO matches (id,tournament,title,starts,checkin,release) VALUES (?,?,?,?,?,?)').run('match','event','Test match',now,now,now);
+    for(const [id,reg,player] of [['result1','r1','captain'],['result2','r2','second']])db.prepare('INSERT INTO results (id,match,registration,submitter,placement,eliminations,won,created) VALUES (?,?,?,?,?,?,?,?)').run(id,'match',reg,player,1,2,1,now);
+    db.exec("UPDATE results SET status='verified' WHERE id='result1'");
+    assert.throws(()=>db.exec("UPDATE results SET status='verified' WHERE id='result2'"),/UNIQUE constraint/);
   });
   db.close();
 });

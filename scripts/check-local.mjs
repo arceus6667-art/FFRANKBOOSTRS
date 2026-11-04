@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+const web=fileURLToPath(new URL('../web/',import.meta.url));
+function fixture(sql){mkdirSync(web+'/work',{recursive:true});writeFileSync(web+'/work/review-fixture.sql',sql);execFileSync(process.execPath,['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local','--config','dist/server/wrangler.json','--persist-to','.wrangler/state','--file','work/review-fixture.sql'],{cwd:web,stdio:'pipe'});}
+const base='http://127.0.0.1:5173';
+const login=await fetch(base+'/signin-with-chatgpt?return_to=/profile',{redirect:'manual'});
+const cookie=login.headers.get('set-cookie').split(';')[0];
+let checks=0;
+async function get(path,auth=true){const r=await fetch(base+'/api/v1/'+path,{headers:auth?{Cookie:cookie}:{}});return {status:r.status,body:await r.json()};}
+async function post(path,body,status=200,auth=true){const r=await fetch(base+'/api/v1/'+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:base,...auth?{Cookie:cookie}:{}},body:JSON.stringify(body)});const result=await r.json();assert.equal(r.status,status,JSON.stringify({path,result}));checks++;return result;}
+assert.equal((await get('admin',false)).status,401);checks++;
+await post('profile',{name:'QA Contender',region:'Test region',game:'ffmax',adult:true,consent:true});
+await post('game-profile',{game:'ffmax',name:'QA player',uid:'qa-private-game-id'});
+await post('teams/create',{name:'QA Local Squad',game:'ffmax'});
+const before=await get('me');assert.ok(before.body.teams.length);assert.equal(before.body.identities[0].uid,'qa-private-game-id');checks++;
+const now=Date.now();
+await post('admin/tournaments',{title:'QA Local Event',game:'ffmax',mode:'clash_squad',format:'single',size:1,capacity:2,description:'Local integration fixture only.',opens:now-60000,closes:now+45000,checkin:now+50000,starts:now+55000,rules:{text:'Local integration rules, no production event.',maps:'Test',placementPoints:[],winPoints:3}});
+const a=await get('admin');const event=a.body.tournaments.find(t=>t.title==='QA Local Event'&&t.created>=now);assert.ok(event);checks++;
+assert.equal((await get('bootstrap',false)).body.tournaments.some(t=>t.id===event.id),false);checks++;
+await post('admin/event-state',{id:event.id,status:'registration_open'});
+await post('tournaments/register',{id:event.id});
+await post('tournaments/register',{id:event.id},409);
+const workspace=(await get('me')).body;const entry=workspace.registrations.find(r=>r.tournament===event.id);assert.ok(entry);checks++;
+const publicData=(await get('bootstrap',false)).body;assert.equal(publicData.tournaments.find(t=>t.id===event.id).registered,1);assert.equal(JSON.stringify(publicData).includes('qa-private-game-id'),false);checks++;
+await post('admin/event-state',{id:event.id,status:'registration_closed'});
+await post('admin/matches',{tournament:event.id,title:'QA Local Match',starts:now+55000,checkin:now+50000,release:now+50000,room:'qa-private-room',instructions:'Test only',status:'upcoming',participants:entry.id});
+await post('admin/event-state',{id:event.id,status:'upcoming'});
+const matches=(await get('me')).body.matches;const match=matches.find(m=>m.tournament===event.id);assert.ok(match);assert.equal(JSON.stringify(matches).includes('qa-private-room'),false);checks++;
+await post('matches/check-in',{id:match.id});
+const blocked=await fetch(base+'/api/v1/profile',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://other.example',Cookie:cookie},body:'{}'});assert.equal(blocked.status,403);checks++;
+await post('admin/event-state',{id:event.id,status:'live'},400);
+await new Promise(r=>setTimeout(r,Math.max(0,now+56000-Date.now())));
+await post('admin/event-state',{id:event.id,status:'live'});
+await post('results/submit',{match:match.id,placement:1,eliminations:2,won:true});
+const result=(await get('admin')).body.results.find(r=>r.match===match.id);assert.ok(result);assert.equal(result.status,'pending');checks++;
+assert.equal((await get('bootstrap',false)).body.leaderboard.some(r=>r.tournament===event.id),false);checks++;
+await post('admin/review',{id:result.id,status:'verified',reason:'Self-review should fail.'},403);
+await post('disputes/create',{result:result.id,reason:'QA dispute to verify moderation persistence.'});
+const dispute=(await get('admin')).body.disputes.find(d=>d.result===result.id);assert.ok(dispute);checks++;
+await post('admin/disputes',{id:dispute.id,resolution:'Self-resolution should fail.'},403);
+await post('admin/announcements',{title:'QA Local Announcement',body:'Integration fixture that stays in the local database.',game:'all',video:''});
+const ann=(await get('bootstrap')).body.announcements.find(a=>a.title==='QA Local Announcement');assert.ok(ann);checks++;
+await post('admin/delete-announcement',{id:ann.id});
+// Test-only independent submitter fixture. This command is hardcoded to local D1.
+fixture(`INSERT OR IGNORE INTO players (id,code,email,name,adult,consent,created) VALUES ('site:qa_other','RF-QA-OTHER','other@example.test','QA Other',1,'2026-11-v1',${Date.now()}); UPDATE results SET submitter='site:qa_other' WHERE id='${result.id}'; UPDATE disputes SET player='site:qa_other' WHERE id='${dispute.id}'; UPDATE entrants SET player='site:qa_other' WHERE registration='${entry.id}'; UPDATE registrations SET captain='site:qa_other',roster='["site:qa_other"]' WHERE id='${entry.id}';`);
+await post('admin/disputes',{id:dispute.id,resolution:'QA independent resolution with fixture evidence.'});
+await post('admin/review',{id:result.id,status:'verified',placement:1,eliminations:2,won:true,reason:'QA independent verification.'});
+const standing=(await get('bootstrap',false)).body.leaderboard.find(r=>r.tournament===event.id);assert.equal(standing.points,3);assert.equal(standing.wins,1);checks++;
+await post('support/create',{kind:'privacy',subject:'QA privacy request',message:'Local support queue integration test.'});
+const ticket=(await get('admin')).body.support.find(t=>t.subject==='QA privacy request');assert.ok(ticket);checks++;
+await post('admin/support',{id:ticket.id,response:'QA support response delivered through notifications.'});
+assert.ok((await get('me')).body.notifications.some(n=>n.message.includes('QA support response')));checks++;
+await post('admin/event-state',{id:event.id,status:'completed'});
+await post('admin/archive',{id:event.id});
+console.log(JSON.stringify({checks,event:event.id,match:match.id,result:result.id,dispute:dispute.id,status:'PASS',productionDataCreated:false}));

@@ -8,6 +8,20 @@
       "when": 1793824857043,
       "tag": "0000_safe_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793826165960,
+      "tag": "0001_fine_skreet",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793826481047,
+      "tag": "0002_nice_magneto",
+      "breakpoints": true
     }
   ]
 }

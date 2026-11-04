@@ -1,18 +1,19 @@
 import { env } from 'cloudflare:workers';
 import { cookies } from 'next/headers';
 import { all, one, run, statement, db, uid, auditStatement, notifyStatement, config } from './store';
-import { identity, requirePlayer, requireRole, rateLimit, currentTeams } from './identity';
+import { identity, requirePlayer, requireRole, rateLimit, currentTeams, playerReady } from './identity';
 import { expect, str, int, date, validateEvent, rulesFor, safeVideo, states, Problem, type Row } from './domain';
 import { nativeAuth } from './native-auth';
+import { lobbyRelease, lobbyAvailable } from './competition.mjs';
 
 export async function bootstrap() {
   const [user,tournaments,announcements,settings,leaderboard] = await Promise.all([
-    identity(),all(`SELECT t.*,p.name organizer_name,(SELECT COUNT(*) FROM registrations r WHERE r.tournament=t.id) registered FROM tournaments t JOIN players p ON p.id=t.organizer WHERE t.status<>'draft' AND t.archived=0 ORDER BY starts LIMIT 200`),
+    identity(),all(`SELECT t.*,p.name organizer_name,(SELECT COUNT(*) FROM registrations r WHERE r.tournament=t.id) registered FROM tournaments t JOIN players p ON p.id=t.organizer WHERE t.status<>'draft' AND t.archived=0 AND t.deleted=0 ORDER BY starts LIMIT 200`),
     all('SELECT * FROM announcements ORDER BY created DESC LIMIT 20'),all("SELECT * FROM settings WHERE key IN ('support','instagram','youtube','apk','community')"),
-    all(`SELECT p.code,p.name,t.game,t.id tournament,t.title tournament_title, SUM(r.points) points,SUM(r.won) wins,SUM(r.eliminations) eliminations,COUNT(*) played FROM results r JOIN entrants e ON e.registration=r.registration JOIN players p ON p.id=e.player JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.status='verified' GROUP BY p.id,t.game,t.id ORDER BY points DESC,wins DESC,eliminations DESC LIMIT 1000`),
+    all(`SELECT p.code,p.name,t.game,t.id tournament,t.title tournament_title, SUM(r.points) points,SUM(r.won) wins,SUM(r.eliminations) eliminations,COUNT(*) played FROM results r JOIN entrants e ON e.registration=r.registration JOIN players p ON p.id=e.player JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.status='verified' AND t.deleted=0 GROUP BY p.id,t.game,t.id ORDER BY points DESC,wins DESC,eliminations DESC LIMIT 1000`),
   ]);
-  const teamLeaderboard=await all(`SELECT tm.id,tm.name,t.game,t.id tournament,t.title tournament_title,SUM(r.points) points,SUM(r.won) wins,SUM(r.eliminations) eliminations,COUNT(*) played FROM results r JOIN registrations reg ON reg.id=r.registration JOIN teams tm ON tm.id=reg.team JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.status='verified' GROUP BY tm.id,t.game,t.id ORDER BY points DESC,wins DESC,eliminations DESC LIMIT 1000`);
-  return {user,tournaments,announcements,settings,leaderboard,teamLeaderboard,emailAuth:!!(config().AUTH_PEPPER||config().SUPABASE_URL&&config().SUPABASE_PUBLISHABLE_KEY)};
+  const teamLeaderboard=await all(`SELECT tm.id,tm.name,t.game,t.id tournament,t.title tournament_title,SUM(r.points) points,SUM(r.won) wins,SUM(r.eliminations) eliminations,COUNT(*) played FROM results r JOIN registrations reg ON reg.id=r.registration JOIN teams tm ON tm.id=reg.team JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.status='verified' AND t.deleted=0 GROUP BY tm.id,t.game,t.id ORDER BY points DESC,wins DESC,eliminations DESC LIMIT 1000`);
+  return {user,onboardingComplete:!user||await playerReady(user),tournaments,announcements,settings,leaderboard,teamLeaderboard,emailAuth:!!(config().AUTH_PEPPER||config().SUPABASE_URL&&config().SUPABASE_PUBLISHABLE_KEY)};
 }
 export async function workspace() {
   const p=await requirePlayer(),id=String(p.id);
@@ -20,7 +21,7 @@ export async function workspace() {
     all('SELECT * FROM identities WHERE player=?',[id]),currentTeams(id),
     all("SELECT i.*,t.name,t.game FROM invitations i JOIN teams t ON t.id=i.team WHERE i.player=? AND i.status='pending' AND i.expires>?",[id,Date.now()]),
     all('SELECT r.*,t.title,t.game,t.status,t.starts,t.checkin FROM registrations r JOIN entrants e ON e.registration=r.id JOIN tournaments t ON t.id=r.tournament WHERE e.player=? ORDER BY t.starts',[id]),
-    all(`SELECT m.id,m.tournament,m.title,m.starts,m.checkin,m.release,m.status,t.title tournament_title,t.game,c.created checked FROM matches m JOIN tournaments t ON t.id=m.tournament JOIN entrants e ON e.tournament=t.id LEFT JOIN checkins c ON c.match=m.id AND c.player=e.player WHERE e.player=? AND (json_array_length(m.participants)=0 OR e.registration IN (SELECT value FROM json_each(m.participants))) ORDER BY m.starts`,[id]),
+    all(`SELECT m.id,m.tournament,m.title,m.starts,m.checkin,(m.starts-900000) release,m.status,t.status event_status,t.deleted event_deleted,t.title tournament_title,t.game,c.created checked FROM matches m JOIN tournaments t ON t.id=m.tournament JOIN entrants e ON e.tournament=t.id LEFT JOIN checkins c ON c.match=m.id AND c.player=e.player WHERE e.player=? AND (json_array_length(m.participants)=0 OR e.registration IN (SELECT value FROM json_each(m.participants))) ORDER BY m.starts`,[id]),
     all('SELECT r.*,m.title,m.tournament,t.game FROM results r JOIN entrants e ON e.registration=r.registration JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE e.player=? ORDER BY r.created DESC',[id]),
     all('SELECT * FROM notifications WHERE player=? ORDER BY created DESC LIMIT 100',[id]),
   ]);
@@ -31,7 +32,8 @@ export async function workspace() {
 export async function adminData() {
   const p=await requireRole('admin','moderator');
   const queries:Record<string,string>={
-    tournaments:'SELECT t.*,p.name organizer_name,(SELECT COUNT(*) FROM registrations r WHERE r.tournament=t.id) registered FROM tournaments t JOIN players p ON p.id=t.organizer ORDER BY t.created DESC LIMIT 500',
+    tournaments:'SELECT t.*,p.name organizer_name,(SELECT COUNT(*) FROM registrations r WHERE r.tournament=t.id) registered FROM tournaments t JOIN players p ON p.id=t.organizer WHERE t.deleted=0 ORDER BY t.created DESC LIMIT 500',
+    deletedTournaments:'SELECT * FROM tournaments WHERE deleted=1 ORDER BY created DESC LIMIT 100',
     players:'SELECT id,code,name,region,game,role,adult,consent,created FROM players ORDER BY created DESC LIMIT 500',
     teams:'SELECT t.*,p.name captain_name,(SELECT COUNT(*) FROM members m WHERE m.team=t.id) members FROM teams t JOIN players p ON p.id=t.captain ORDER BY t.created DESC LIMIT 500',
     registrations:'SELECT r.*,t.title,p.name captain_name FROM registrations r JOIN tournaments t ON t.id=r.tournament JOIN players p ON p.id=r.captain ORDER BY r.created DESC LIMIT 500',
@@ -50,13 +52,11 @@ export async function lobby(matchId:string) {
   const p=await requirePlayer(),id=String(p.id),m=await one('SELECT * FROM matches WHERE id=?',[matchId]);expect(m,'Match not found.',404);
   if(p.role!=='admin') {
     expect(await one('SELECT 1 FROM entrants WHERE tournament=? AND player=? AND (json_array_length(?)=0 OR registration IN (SELECT value FROM json_each(?)))',[m.tournament,id,m.participants,m.participants]),'This lobby is for assigned registered players.',403);
-    expect(await one('SELECT 1 FROM checkins WHERE match=? AND player=?',[matchId,id]),'Check in before accessing the lobby.',403);
-    expect(Date.now()>=Number(m.release)&&Date.now()<Number(m.starts)+6*3600000&&m.status!=='completed'&&m.status!=='cancelled','Lobby details are not available in this time window.',403);
-    const t=await one('SELECT status FROM tournaments WHERE id=?',[m.tournament]);expect(t&&['upcoming','live'].includes(String(t.status)),'Lobby is unavailable for this event status.',403);
+    const t=await one('SELECT status,deleted FROM tournaments WHERE id=?',[m.tournament]);expect(t&&lobbyAvailable(m,t),'Room ID and password unlock exactly 15 minutes before the match starts.',403);
   }
-  expect(m.room,'The organizer has not released room credentials yet.',409);
+  expect(m.room,'The administrator has not entered room credentials yet.',409);
   await auditStatement(id,'lobby.access',matchId).run();
-  return {room:m.room,instructions:m.instructions};
+  return {room:m.room,password:m.roomPassword,instructions:m.instructions};
 }
 
 export async function mutate(action:string,b:Record<string,unknown>,request:Request) {
@@ -65,6 +65,25 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
   const admin=()=>expect(p.role==='admin','Administrator access required.',403);
   const reviewer=()=>expect(['admin','moderator'].includes(String(p.role)),'Moderator access required.',403);
   const id=()=>str(b.id,1,100);
+  if(p.role==='player'&&!['onboarding','profile','game-profile','support/create','notifications/read'].includes(action))expect(await playerReady(p),'Complete your required game UID setup before continuing.',403);
+  if(action==='onboarding') {
+    const game=str(b.game);expect(['ffmax','bgmi','codm'].includes(game),'Choose a supported game.');expect(b.adult===true&&b.consent===true,'Confirm your age and accept the policies.');
+    const saved=await one('SELECT * FROM identities WHERE player=? AND game=?',[actor,game]);
+    const inGameName=saved?String(saved.name):str(b.inGameName,1,64),gameUid=saved?String(saved.uid):str(b.gameUid,1,64);
+    await db().batch([statement("UPDATE players SET name=?,region=?,game=?,adult=1,consent='2026-11-v1' WHERE id=?",[str(b.name,2,40),str(b.region,2,80),game,actor]),statement('INSERT INTO identities (id,player,game,name,uid) VALUES (?,?,?,?,?) ON CONFLICT(player,game) DO NOTHING',[uid(),actor,game,inGameName,gameUid]),auditStatement(actor,'profile.onboarding_completed',game)]);
+    return {message:'Your game identity is saved. You will not need to enter it for each tournament.',redirectTo:'/dashboard'};
+  }
+  if(action==='admin/delete-tournament') {
+    admin();expect(b.confirm===true,'Confirm deletion to remove this tournament.');const t=await one('SELECT * FROM tournaments WHERE id=? AND deleted=0',[id()]);expect(t,'Tournament not found.',404);const players=await all('SELECT DISTINCT player FROM entrants WHERE tournament=?',[t.id]);
+    await db().batch([statement("UPDATE tournaments SET deleted=1,archived=1,status='cancelled' WHERE id=?",[t.id]),statement("UPDATE matches SET status='cancelled' WHERE tournament=?",[t.id]),auditStatement(actor,'tournament.delete',String(t.id)),...players.map(e=>notifyStatement(String(e.player),`${t.title} was removed by the administrator. The event is cancelled; your history is retained.`))]);return {message:'Tournament deleted from discovery. Existing participants were notified.'};
+  }
+  if(action==='admin/restore-tournament') {admin();await db().batch([statement('UPDATE tournaments SET deleted=0 WHERE id=? AND deleted=1',[id()]),auditStatement(actor,'tournament.restore',id())]);return {message:'Tournament restored to archived, cancelled history.'};}
+  if(action==='admin/edit-details') {admin();expect(await one('SELECT id FROM tournaments WHERE id=? AND deleted=0',[id()]),'Tournament not found.',404);await db().batch([statement('UPDATE tournaments SET title=?,description=? WHERE id=?',[str(b.title,4,100),str(b.description,10,4000),id()]),auditStatement(actor,'tournament.details_updated',id())]);return {message:'Tournament details updated for users. Published scoring and rosters stay locked.'};}
+  if(action==='admin/event-lobby') {
+    admin();const t=await one('SELECT * FROM tournaments WHERE id=? AND deleted=0',[id()]);expect(t&&!['cancelled','completed'].includes(String(t.status)),'Choose an active tournament.');expect(t.format!=='knockout','Assign knockout entries from Admin → Matches before setting individual match rooms.');
+    const match=await one('SELECT * FROM matches WHERE tournament=? ORDER BY starts LIMIT 1',[t.id]);const matchId=match?String(match.id):uid();
+    await db().batch([match?statement('UPDATE matches SET room=?,roomPassword=?,instructions=?,release=starts-900000 WHERE id=?',[str(b.room,1,200),str(b.roomPassword??'',0,200),str(b.instructions??'',0,2000),matchId]):statement('INSERT INTO matches (id,tournament,title,starts,checkin,release,room,roomPassword,instructions) VALUES (?,?,?,?,?,?,?,?,?)',[matchId,t.id,`${t.title} — Match 1`,t.starts,t.checkin,lobbyRelease(t.starts),str(b.room,1,200),str(b.roomPassword??'',0,200),str(b.instructions??'',0,2000)]),auditStatement(actor,'tournament.lobby_updated',String(t.id))]);return {message:'Room saved privately. Registered players see it 15 minutes before start.'};
+  }
   if(action==='profile') {
     const name=str(b.name,2,40),region=str(b.region,2,80),game=str(b.game);expect(['ffmax','bgmi','codm'].includes(game),'Choose a supported game.');
     expect(b.adult===true&&b.consent===true,'You must be 18 or older and accept the terms and privacy policy to compete.');
@@ -155,11 +174,11 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
 
   if(action==='admin/tournaments') {
     admin();const t=validateEvent(b),rules=rulesFor(b.rules,t.mode==='battle_royale');
-    const eventId=b.id?str(b.id):uid();const old=b.id?await one('SELECT * FROM tournaments WHERE id=?',[eventId]):null;
+    const eventId=b.id?str(b.id):uid();const old=b.id?await one('SELECT * FROM tournaments WHERE id=? AND deleted=0',[eventId]):null;if(b.id)expect(old,'Tournament not found.',404);
     if(old)expect(old.status==='draft','Published rules and rosters are locked. Use postpone or cancel for published events.');
-    const columns=Object.keys(t),values=Object.values(t);
-    await db().batch([old?statement(`UPDATE tournaments SET ${columns.map(c=>`${c}=?`).join(',')},rules=? WHERE id=?`,[...values,JSON.stringify(rules),eventId]):statement(`INSERT INTO tournaments (id,${columns.join(',')},rules,organizer,created) VALUES (${Array(columns.length+4).fill('?').join(',')})`,[eventId,...values,JSON.stringify(rules),actor,now]),auditStatement(actor,old?'tournament.edit':'tournament.create',eventId)]);
-    return {message:'Tournament draft saved. Review it before opening registration.'};
+    const columns=Object.keys(t),values=Object.values(t),publish=!old&&b.publish===true;const matchId=!old&&t.format!=='knockout'?uid():null;
+    await db().batch([old?statement(`UPDATE tournaments SET ${columns.map(c=>`${c}=?`).join(',')},rules=? WHERE id=?`,[...values,JSON.stringify(rules),eventId]):statement(`INSERT INTO tournaments (id,${columns.join(',')},rules,organizer,created,status) VALUES (${Array(columns.length+5).fill('?').join(',')})`,[eventId,...values,JSON.stringify(rules),actor,now,publish?'registration_open':'draft']),...(matchId?[statement('INSERT INTO matches (id,tournament,title,starts,checkin,release,room,roomPassword,instructions) VALUES (?,?,?,?,?,?,?,?,?)',[matchId,eventId,`${t.title} — Match 1`,t.starts,t.checkin,lobbyRelease(t.starts),str(b.room??'',0,200),str(b.roomPassword??'',0,200),str(b.instructions??'',0,2000)])]:[]),auditStatement(actor,old?'tournament.edit':'tournament.create',eventId)]);
+    return {id:eventId,matchId,message:publish?'Tournament published. It is now visible to users.':'Tournament draft saved. Open registration to make it visible to users.'};
   }
   if(action==='admin/event-state') {
     admin();const t=await one('SELECT * FROM tournaments WHERE id=?',[id()]);expect(t,'Event not found.',404);const status=str(b.status);
@@ -177,13 +196,13 @@ export async function mutate(action:string,b:Record<string,unknown>,request:Requ
   if(action==='admin/archive') {admin();const t=await one('SELECT status FROM tournaments WHERE id=?',[id()]);expect(t&&['cancelled','completed'].includes(String(t.status)),'Only completed or cancelled events can be archived.');await db().batch([statement('UPDATE tournaments SET archived=1 WHERE id=?',[id()]),auditStatement(actor,'tournament.archive',id())]);return {message:'Tournament archived.'};}
   if(action==='admin/matches') {
     admin();const event=await one('SELECT * FROM tournaments WHERE id=?',[str(b.tournament)]);expect(event&&!['draft','completed','cancelled'].includes(String(event.status)),'Choose a published active event.');
-    const starts=date(b.starts),checkin=date(b.checkin),release=date(b.release);expect(Number(event.closes)<=checkin&&checkin<=starts&&release<=starts&&release>=checkin,'Lobby release must be between check-in deadline and match start.');
+    const starts=date(b.starts),checkin=date(b.checkin),release=lobbyRelease(starts);expect(Number(event.closes)<=checkin&&checkin<=starts,'Check-in must follow registration closing and end by match start.');
     const matchId=b.id?str(b.id):uid();const previous=b.id?await one('SELECT * FROM matches WHERE id=?',[matchId]):null;
     if(b.id)expect(previous&&previous.tournament===event.id,'Match does not belong to this tournament.');
     const participants=str(b.participants??'',0,2000).split(',').map(s=>s.trim()).filter(Boolean);expect(new Set(participants).size===participants.length,'Match entries must be unique.');if(event.format==='knockout')expect(participants.length===2,'A knockout match needs exactly two registered entry IDs.');for(const entry of participants)expect(await one('SELECT id FROM registrations WHERE id=? AND tournament=?',[entry,event.id]),'Every assigned entry must belong to this event.');if(previous){const hasResults=await one('SELECT id FROM results WHERE match=?',[matchId]);expect(!hasResults||JSON.stringify(participants)===previous.participants,'Match assignments are locked once results exist.');}
-    const values=[event.id,str(b.title,3,100),starts,checkin,release,str(b.room??'',0,200),str(b.instructions??'',0,2000),str(b.status??'upcoming'),JSON.stringify(participants)];expect(['upcoming','live','completed','cancelled'].includes(String(values[7])),'Invalid match state.');
+    const values=[event.id,str(b.title,3,100),starts,checkin,release,str(b.room??'',0,200),str(b.instructions??'',0,2000),str(b.status??'upcoming'),JSON.stringify(participants),str(b.roomPassword??'',0,200)];expect(['upcoming','live','completed','cancelled'].includes(String(values[7])),'Invalid match state.');
     const entrants=await all('SELECT DISTINCT player FROM entrants WHERE tournament=?',[event.id]);
-    await db().batch([previous?statement('UPDATE matches SET tournament=?,title=?,starts=?,checkin=?,release=?,room=?,instructions=?,status=?,participants=? WHERE id=?',[...values,matchId]):statement('INSERT INTO matches (tournament,title,starts,checkin,release,room,instructions,status,participants,id) VALUES (?,?,?,?,?,?,?,?,?,?)',[...values,matchId]),auditStatement(actor,'match.save',matchId),...entrants.map(e=>notifyStatement(String(e.player),`${event.title}: match schedule updated. Open My Matches for details.`))]);return {message:'Match and lobby settings saved.'};
+    await db().batch([previous?statement('UPDATE matches SET tournament=?,title=?,starts=?,checkin=?,release=?,room=?,instructions=?,status=?,participants=?,roomPassword=? WHERE id=?',[...values,matchId]):statement('INSERT INTO matches (tournament,title,starts,checkin,release,room,instructions,status,participants,roomPassword,id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',[...values,matchId]),auditStatement(actor,'match.save',matchId),...entrants.map(e=>notifyStatement(String(e.player),`${event.title}: match schedule updated. Open My Matches for details.`))]);return {message:'Match and lobby settings saved.'};
   }
   if(action==='admin/review') {
     reviewer();const r=await one('SELECT r.*,t.rules,t.mode FROM results r JOIN matches m ON m.id=r.match JOIN tournaments t ON t.id=m.tournament WHERE r.id=?',[id()]);expect(r,'Result not found.',404);

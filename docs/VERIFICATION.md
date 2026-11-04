@@ -45,3 +45,9 @@ A single standard login now serves players and administrators, without a public 
 ## Hosted acceptance checks
 
 Published successfully at https://rankforge-esports-india-ffrb.arceus6667.chatgpt.site with the owner-private audience preserved. Production HTTP checks returned 200 for administrator provisioning, normal password login, protected admin access, and the sign-in page. Session cookies have Secure and HttpOnly flags. Anonymous application identity is null; no production events or standings were fabricated. Login HTML contains neither the requested account credentials nor organizer login controls. After provisioning, the bootstrap secret and automatic owner-email role setting were removed; the saved version was redeployed at environment revision 3. Account credentials and the stable password pepper are absent from repository source.
+
+## Admin controls and onboarding revision
+
+27 automated checks pass, including the exact one-millisecond boundary around T-15 minutes, cancellation/completion/deletion visibility, and ignoring legacy early release timestamps. `scripts/check-admin-setup.mjs` passed 39 local HTTP checks: role-specific login destinations, mandatory UID setup, missing-UID rejection, one-time UID persistence, subsequent dashboard entry, player denial of admin mutations, publish-on-create visible to users, room secrets omitted from discovery, saved-UID-only registration, early room denial, late reveal of both ID and password, outsider denial, edits visible to users, deletion confirmation, participant cancellation history, and secret removal after deletion.
+
+The local browser showed the admin-only Add Tournament toolbar, the Games/Tournaments navigation, the labelled editor, and the separate management controls. The user-side tournament HTML does not include admin add actions. All integration fixtures are local; no demonstration tournaments or game UIDs were added to the hosted database.

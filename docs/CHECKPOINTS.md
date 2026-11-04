@@ -49,3 +49,13 @@ The website stays owner-private on initial publication. Optional email-provider 
 ## 5 — Single SaaS login and private administrator account
 
 Removed public organizer choices and organizer branding from account entry. Added native password accounts and revocable sessions, a protected one-time admin provisioner, normal login routing based on database roles, password changes with session revocation, and verified-email ownership checks before password signup. Production credentials are never in code or website copy. A separately generated administrator login will be delivered only in the owner chat.
+
+## 7 — Discoverable admin controls, saved UID onboarding and timed rooms
+
+Admin accounts now land in tournament management after the shared login. An admin-only toolbar and Add Tournament actions appear across the website, including Games and Tournaments. The editor uses ordinary labelled fields rather than JSON, supports publish-on-create, auto-creates the first non-knockout match, and exposes title/description edits, private room settings and deletion. Deleted events are cancelled and removed from public discovery while participant history and audit records remain.
+
+Normal players must complete one-time game identity setup before entering their workspace or using competition mutations. The selected game UID is saved privately once and reused in registrations and later logins. Profile editing remains available for intentional corrections or adding another game.
+
+Room ID and password are separate private fields. Access is derived from the actual match start: exactly 15 minutes before start, regardless of legacy/custom release values. Assigned registered players see an automatic countdown and reveal in My Matches and the registered event detail. Public discovery never includes room secrets.
+
+Validation: 27 domain/database/security checks and 39 request-flow checks pass. Browser inspection confirmed the admin toolbar and tournament editor, while player HTML omits Add Tournament controls.

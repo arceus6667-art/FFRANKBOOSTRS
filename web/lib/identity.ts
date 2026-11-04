@@ -34,3 +34,7 @@ export async function rateLimit(key:string,max=30) {
   if(minute%10===0)await run('DELETE FROM limits WHERE expires<?',[Date.now()]);
 }
 export async function currentTeams(id:string) {return all('SELECT t.*,m.player FROM teams t JOIN members m ON m.team=t.id WHERE m.player=?',[id]);}
+export async function playerReady(p:Row) {
+  if(p.role!=='player')return true;
+  return !!(p.adult&&p.consent&&await one('SELECT id FROM identities WHERE player=? AND game=? AND length(trim(uid))>0 AND length(trim(name))>0',[p.id,p.game]));
+}

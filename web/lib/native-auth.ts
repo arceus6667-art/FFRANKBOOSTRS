@@ -38,7 +38,7 @@ export async function nativeAuth(action:string,b:Record<string,unknown>,request:
     const c=await one('SELECT * FROM credentials WHERE email=?',[email]);
     const calculated=await passwordHash(b.password,String(c?.salt??'unknown-account-timing-salt'),pepper);
     expect(c&&equalHash(calculated,String(c.hash))&&c.verified===1,'Unable to sign in. Check your login ID and password.',401);
-    await startSession(String(c.player),request);await auditStatement(String(c.player),'account.sign_in',String(c.player)).run();return {message:'Signed in. Welcome back.'};
+    await startSession(String(c.player),request);await auditStatement(String(c.player),'account.sign_in',String(c.player)).run();const p=await one('SELECT * FROM players WHERE id=?',[c.player]);const ready=p?.role!=='player'||p.adult&&p.consent&&await one('SELECT id FROM identities WHERE player=? AND game=?',[p.id,p.game]);return {message:'Signed in. Welcome back.',redirectTo:p?.role==='admin'?'/admin/tournaments':ready?'/dashboard':'/onboarding'};
   }
   if(action==='auth/change-password') {
     const p=await nativeSession();expect(p,'Sign in with your account first.',401);
@@ -53,13 +53,14 @@ export async function nativeAuth(action:string,b:Record<string,unknown>,request:
     expect(siteUser&&siteUser.email.toLowerCase()===email,'Verify this email with secure sign-in before creating its password account.',403);
   }
   const player=action==='auth/bootstrap'?`native:${uid()}`:`site:${siteUser!.userId}`;
-  const existing=await one('SELECT id FROM players WHERE id=?',[player]);const salt=randomToken();
+  const existing=await one('SELECT id FROM players WHERE id=?',[player]);const salt=randomToken();let details:null|{name:string,region:string,game:string,inGameName:string,gameUid:string}=null;if(action==='auth/register'){const game=str(b.game);expect(['ffmax','bgmi','codm'].includes(game),'Choose a supported game.');const saved=await one('SELECT name,uid FROM identities WHERE player=? AND game=?',[player,game]);details={game,name:str(b.name,2,40),region:str(b.region,2,80),inGameName:saved?String(saved.name):str(b.inGameName,1,64),gameUid:saved?String(saved.uid):str(b.gameUid,1,64)};}
   await db().batch([
     ...(!existing?[statement('INSERT INTO players (id,code,email,name,role,created) VALUES (?,?,?,?,?,?)',[player,`RF-${uid().slice(0,8).toUpperCase()}`,email,action==='auth/bootstrap'?'Platform Admin':'New contender',action==='auth/bootstrap'?'admin':'player',Date.now()])]:[]),
+    ...(details?[statement("UPDATE players SET name=?,region=?,game=?,adult=1,consent='2026-11-v1' WHERE id=?",[details.name,details.region,details.game,player]),statement('INSERT INTO identities (id,player,game,name,uid) VALUES (?,?,?,?,?) ON CONFLICT(player,game) DO NOTHING',[uid(),player,details.game,details.inGameName,details.gameUid])]:[]),
     statement('INSERT INTO credentials (player,email,salt,hash,verified,created) VALUES (?,?,?,?,1,?)',[player,email,salt,await passwordHash(b.password,salt,pepper),Date.now()]),
     ...(action==='auth/bootstrap'?[statement("INSERT INTO settings (key,value) VALUES ('admin_bootstrapped','complete')")]:[]),
     auditStatement(player,action==='auth/bootstrap'?'account.admin_provisioned':'account.created',player),
   ]);
   if(action==='auth/register')await startSession(player,request);
-  return {message:action==='auth/bootstrap'?'Administrator account provisioned.':'Your verified account is ready.'};
+  return {message:action==='auth/bootstrap'?'Administrator account provisioned.':'Your verified account and saved game identity are ready.',redirectTo:'/dashboard'};
 }

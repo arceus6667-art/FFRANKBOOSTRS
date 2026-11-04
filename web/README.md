@@ -54,3 +54,13 @@ Before expanding to public access, review the policy copy and current publisher 
 The main login form is shared by players and administrators. Role is read from the server database; there is no public organizer signup option. Native password authentication uses a secret AUTH_PEPPER configured in hosted runtime settings, per-account salts and PBKDF2, and stores only hashed session tokens with a seven-day expiry. A one-time secret-gated provisioning action creates the initial administrator. Credentials are delivered privately in the owner chat and are never included in repository source or public UI. Passwords can be changed from Settings; this revokes other sessions.
 
 Password account registration requires ownership of the same verified hosted email. Email delivery/recovery through an external provider is still unconfigured. The reserved test-domain administrator login is deliberately not used to send email. Preserve AUTH_PEPPER securely; rotating it requires credential re-enrollment.
+
+## Tournament administration and first-entry setup
+
+Use the shared login with an administrator account. It opens `/admin/tournaments`; Add Tournament is also available in the admin-only toolbar and on Games and Tournaments. Leave Publish selected to show an event to users immediately. Manage tournaments jumps to existing event cards with edit, private room and Delete Tournament controls. Deletion cancels associated matches and hides the event publicly, retaining private participant/audit history.
+
+Players must save their preferred game, in-game name and UID during first-entry setup. Subsequent login and tournament registration reuse the stored identity. Adding another game or deliberately correcting a UID is available in Profile. Admin management itself does not require a player game identity.
+
+Store room ID and password in the private event/match controls. All user release checks derive `match.starts - 900000`; a supplied/legacy release value cannot reveal credentials early. Registered assigned players receive an automatic countdown and reveal at T-15 minutes. No check-in is required solely to view the room; tournament check-in remains a separate match attendance action. Public data excludes these secrets. Public content refreshes every 30 seconds while visible and on window focus.
+
+Run `node scripts/check-admin-setup.mjs` from the repository root against a disposable local preview for the new acceptance flow. It never targets production.

@@ -14,7 +14,7 @@ export const tournaments = sqliteTable('tournaments', {
   size:integer().notNull(), capacity:integer().notNull(), description:text().notNull(), rules:text().notNull(),
   status:text().notNull().default('draft'), opens:integer().notNull(), closes:integer().notNull(), starts:integer().notNull(),
   checkin:integer().notNull(), organizer:text().notNull().references(() => players.id),
-  archived:integer().notNull().default(0), created:integer().notNull(),
+  archived:integer().notNull().default(0), deleted:integer().notNull().default(0), created:integer().notNull(),
 }, t=>[index('events_status_start').on(t.status,t.starts)]);
 export const teams = sqliteTable('teams', {
   id:text().primaryKey(), name:text().notNull(), game:text().notNull(), captain:text().notNull().references(()=>players.id), created:integer().notNull(),
@@ -32,7 +32,7 @@ export const entrants = sqliteTable('entrants', {
   id:text().primaryKey(),registration:text().notNull().references(()=>registrations.id,{onDelete:'cascade'}), tournament:text().notNull().references(()=>tournaments.id),player:text().notNull().references(()=>players.id),
 },t=>[uniqueIndex('one_event_entry').on(t.tournament,t.player),index('entrants_player').on(t.player)]);
 export const matches = sqliteTable('matches', {
-  id:text().primaryKey(),tournament:text().notNull().references(()=>tournaments.id),title:text().notNull(), starts:integer().notNull(),checkin:integer().notNull(),release:integer().notNull(),room:text().notNull().default(''), instructions:text().notNull().default(''),status:text().notNull().default('upcoming'), participants:text().notNull().default('[]'),
+  id:text().primaryKey(),tournament:text().notNull().references(()=>tournaments.id),title:text().notNull(), starts:integer().notNull(),checkin:integer().notNull(),release:integer().notNull(),room:text().notNull().default(''), roomPassword:text().notNull().default(''), instructions:text().notNull().default(''),status:text().notNull().default('upcoming'), participants:text().notNull().default('[]'),
 },t=>[index('matches_event').on(t.tournament)]);
 export const checkins = sqliteTable('checkins', {
   id:text().primaryKey(),match:text().notNull().references(()=>matches.id),player:text().notNull().references(()=>players.id),created:integer().notNull(),
